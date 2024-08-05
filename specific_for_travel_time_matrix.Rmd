@@ -1,0 +1,224 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-07-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+# Load necessary libraries
+library(r5r)
+library(sf)
+# library(data.table)
+
+options(java.parameters = "-Xmx2G")
+```
+
+```{r eval=FALSE}
+library(httr)
+library(tidytransit)
+
+# Define the URL for the GTFS data
+gtfs_url <- "https://api.tfl.gov.uk/jp_public/api10/XML_STOPSTRUCTURE_REQUEST?sSStopNr=940GZZLUSJP"
+
+# Define the headers
+headers <- add_headers(
+  `Cache-Control` = "no-cache",
+  `app_key` = "Lky19770925@"
+)
+
+# Download the GTFS data
+response <- GET(gtfs_url, headers)
+
+# Check if the request was successful
+if (status_code(response) == 200) {
+  # Save the GTFS data to a temporary file
+  gtfs_zip <- tempfile(fileext = ".zip")
+  writeBin(content(response, "raw"), gtfs_zip)
+  
+  # Read the GTFS data
+  gtfs_data <- read_gtfs(gtfs_zip)
+  
+  # Inspect the GTFS data
+  print(gtfs_data)
+} else {
+  stop("Failed to download GTFS data. Status code: ", status_code(response))
+}
+
+
+
+```
+
+```{r}
+# Define paths
+r5_path <- "data/r5-v7.2-all.jar"
+data_path <- "data/rrr"
+#zip_file <- "data/r5/public_transport_network.zip" 
+# Unzip the GTFS data
+#xunzip(zip_file, exdir = data_path)
+
+# Initialize R5 core
+r5r_core <- setup_r5(data_path = data_path, verbose = FALSE)
+```
+
+```{r}
+# Check if r5r_core is not NULL
+if (!is.null(r5r_core)) {
+  print("R5 transport network setup successfully.")
+} else {
+  stop("Failed to setup R5 transport network.")
+}
+```
+
+```{r}
+# Load your origin and destination data
+origins <- st_read("data/clusters/WCC_centroid.csv")  # replace with your actual path
+destinations_IC <- st_read("data/clusters/IC_centroid.csv")  # replace with your actual path
+
+origins <- origins%>%
+  #to exclude those data points which are out of range 
+  st_as_sf(., coords = c("lon", "lat"), 
+                   crs = 4326)
+destinations_IC <- destinations_IC%>%
+  #to exclude those data points which are out of range 
+  st_as_sf(., coords = c("lon", "lat"), 
+                   crs = 4326)
+
+# Convert to data frames with latitude and longitude columns
+origins_df <- data.frame(id = origins$id, lon = st_coordinates(origins)[,1], lat = st_coordinates(origins)[,2])
+destinations_IC_df <- data.frame(id = destinations_IC$id, lon = st_coordinates(destinations_IC)[,1], lat = st_coordinates(destinations_IC)[,2])
+
+# Convert 'id' to character
+origins_df$id <- as.character(origins_df$id)
+destinations_df$id <- as.character(destinations_df$id)
+```
+
+```{r}
+# Check for missing values
+if (any(is.na(origins)) || any(is.na(destinations))) {
+  stop("There are missing values in the origins or destinations data frames.")
+}
+```
+
+```{r}
+# Calculate travel time matrix
+ttm <- travel_time_matrix(
+  r5r_core = r5r_core,
+  origins = origins_df,
+  destinations = origins_df,
+  mode = "TRANSIT",
+  max_trip_duration = 120
+)
+
+# View the travel time matrix
+head(ttm)
+```
+
+```{r}
+ttm <- travel_time_matrix( 
+  r5r_core, 
+  origins = origins_df, 
+  destinations = origins_df, 
+  mode = c("CAR"), 
+  departure_datetime = 
+    as.POSIXct( "13-05-2022 14:00:00", 
+                format = "%d-%m-%Y %H:%M:%S" ), 
+  max_trip_duration = 120, 
+  verbose = FALSE, 
+  progress = FALSE 
+  )
+
+head(ttm)
+```
+
+
+
+
+## check the GTFS data
+```{r}
+library(gtfstools)
+
+# Load GTFS data
+gtfs_file <- "data/rrr/transitland_london.zip"
+gtfs_data <- read_gtfs(gtfs_file)
+
+# Inspect GTFS data
+summary(gtfs_data)
+```
+```{r}
+names(gtfs_data)
+```
+```{r}
+validation_results <- validate_gtfs(gtfs_data)
+print(validation_results)
+```
+```{r}
+print(head(gtfs_data$agency))
+print(head(gtfs_data$calendar))
+print(head(gtfs_data$calendar_dates))
+print(head(gtfs_data$feed_info))
+print(head(gtfs_data$frequencies))
+print(head(gtfs_data$routes))
+print(head(gtfs_data$shapes))
+print(head(gtfs_data$stop_times))
+print(head(gtfs_data$stops))
+print(head(gtfs_data$trips))
+```
+
+```{r}
+library(r5r)
+library(sf)
+library(data.table)
+
+# Initialize R5 core with verbose output
+r5r_core <- setup_r5(data_path = "data/rrr", verbose = FALSE)
+
+# Use a small subset of your origin and destination data
+origins_subset <- origins_df[1:10, ]
+destinations_subset <- destinations_df[1:10, ]
+
+# Calculate travel time matrix with debug
+tryCatch({
+  ttm <- travel_time_matrix(
+    r5r_core = r5r_core,
+    origins = origins_subset,
+    destinations = destinations_subset,
+    mode = "TRANSIT",
+    max_trip_duration = 60
+  )
+  print(ttm)
+}, error = function(e) {
+  cat("Error: ", e$message, "\n")
+})
+
+# Close the R5 core properly
+stop_r5(r5r_core)
+```
+
+```{r}
+# Check Java version
+system("java -version")
+```
