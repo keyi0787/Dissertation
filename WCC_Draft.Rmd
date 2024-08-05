@@ -568,7 +568,7 @@ ttm <- travel_time_matrix(
 head(ttm)
 ```
 
-##按书上的来
+## follow the package example
 ```{r}
 data_path <- system.file("extdata/poa", package = "r5r") 
 data_path
