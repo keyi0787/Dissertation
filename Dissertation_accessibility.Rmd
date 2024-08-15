@@ -1,0 +1,293 @@
+---
+title: "Dissertation_accessibility"
+output: html_document
+date: "2024-08-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# Packages needed
+```{r}
+# Allocate larger space to run this function
+options(java.parameters = "-Xmx12G")
+
+# Load necessary libraries
+library(r5r)
+library(sf)
+library(h3jsr)
+library(dplyr)
+library(data.table)
+library(tmap)
+library(ggplot2)
+```
+# Urban Accessibility
+## data preparation
+### get gtfs.zip from UK2GTFS package
+### get tiff file of london topography
+```{r}
+# Reproject the shapefile to WGS 84 if necessary
+if (st_crs(london_shp) != st_crs(4326)) {
+  london_shp <- st_transform(london_shp, crs = 4326)
+}
+
+# Fetch the elevation data
+elevation_raster <- get_elev_raster(locations = london_shp, z = 10, clip = "bbox")
+
+# Save the raster to a file
+output_file <- "data/try_for_ttm/r5/london_dem.tif"
+writeRaster(elevation_raster, filename = output_file, format = "GTiff", overwrite = TRUE)
+```
+### prepare hexagon centroids data for ttm using h3jsr
+```{r}
+# Step 1: Read the Westminster shapefile
+westminster_shp <- st_read("data/westminster_shp/westminster_shapefile.shp")
+# Step 2: Check the CRS and transform to WGS84 if necessary
+if (is.na(st_crs(westminster_shp)$epsg) || st_crs(westminster_shp)$epsg != 4326) {
+  westminster_shp <- st_transform(westminster_shp, crs = 4326)
+}
+# Step 3: Validate and simplify the geometry
+westminster_shp <- st_make_valid(westminster_shp)  # Ensure valid geometry
+westminster_shp <- st_simplify(westminster_shp, dTolerance = 0.001)  # Simplify if needed
+
+# Step 4: Define the resolution for hexagons
+resolution <- 9  # Adjust if necessary based on the area size
+# Step 5: Generate hexagons for the region
+westminster_hexagons <- h3jsr::polygon_to_cells(st_geometry(westminster_shp), res = resolution)
+# Debug: Check if hexagons were generated correctly
+print(paste("Number of hexagons generated:", length(westminster_hexagons)))
+```
+The results for the length here is 1, showing all the chracter for ID is stored in one cell in westminster_hexagons.
+```{r}
+# Step 6: Extract hexagon IDs from the list
+hexagon_ids <- unlist(westminster_hexagons)
+# Debug: Check the extracted hexagon IDs
+print("Extracted Hexagon IDs:")
+print(hexagon_ids)
+```
+```{r}
+# Step 7: Convert hexagon IDs to centroids
+centroids <- h3jsr::cell_to_point(hexagon_ids)
+
+# Step 8: Extract longitude and latitude from centroids
+lon <- sapply(centroids, function(x) x[1])
+lat <- sapply(centroids, function(x) x[2])
+
+# Step 9: Prepare the centroid data for export
+centroid_df <- data.frame(
+  h3_index = hexagon_ids,
+  lon = lon,
+  lat = lat
+)
+# Debug: View the data frame
+print("Centroid Data Frame:")
+print(head(centroid_df))
+
+# Step 10: Save the centroid data to a CSV file
+write.csv(centroid_df, "westminster_centroids.csv", row.names = FALSE)
+```
+## set up the r5r core
+```{r}
+# Define paths
+r5_path <- "data/r5-v7.2-all.jar"
+data_path <- "data/try_for_ttm/only_gtfs_workshop/"
+
+# Initialize R5 core
+# may need to restart R!
+r5r_core <- setup_r5(data_path = data_path, verbose = FALSE)
+```
+## read in corresponding csv data
+```{r}
+orgpoints <- fread(file.path("C:/Users/lky09/Documents/casa/Dissertation/WCC/culture clusters/data/try_for_ttm/westminster_centroids.csv"))
+destpoints <- fread(file.path("C:/Users/lky09/Documents/casa/Dissertation/WCC/culture clusters/data/try_for_ttm/destpoints.csv"))
+```
+## calculate the accessibility
+### IC
+```{r}
+mode <- c("WALK", "TRANSIT")
+max_walk_time <- 30 # in minutes
+travel_time_cutoff <- 30 # in minutes
+departure_datetime <- as.POSIXct("07-06-2023 18:00:00", format = "%d-%m-%Y %H:%M:%S")
+time_window <- 30 # in minutes
+percentiles <- 50
+
+access_IC <- accessibility(r5r_core,
+                        origins = orgpoints,
+                        destinations = destpoints,
+                        mode = mode,
+                        opportunities_colnames = c("IC"),
+                        decay_function = "step",
+                        cutoffs = travel_time_cutoff,
+                        departure_datetime = departure_datetime,
+                        max_walk_time = max_walk_time,
+                        time_window = time_window,
+                        percentiles = percentiles,
+                        progress = TRUE)
+head(access_IC)
+```
+### PST
+```{r}
+mode <- c("WALK", "TRANSIT")
+max_walk_time <- 30 # in minutes
+travel_time_cutoff <- 30 # in minutes
+departure_datetime <- as.POSIXct("07-06-2023 18:00:00", format = "%d-%m-%Y %H:%M:%S")
+time_window <- 30 # in minutes
+percentiles <- 50
+
+access_PST <- accessibility(r5r_core,
+                        origins = orgpoints,
+                        destinations = destpoints,
+                        mode = mode,
+                        opportunities_colnames = c("PST"),
+                        decay_function = "step",
+                        cutoffs = travel_time_cutoff,
+                        departure_datetime = departure_datetime,
+                        max_walk_time = max_walk_time,
+                        time_window = time_window,
+                        percentiles = percentiles,
+                        progress = TRUE)
+head(access_PST)
+```
+### AER
+```{r}
+mode <- c("WALK", "TRANSIT")
+max_walk_time <- 30 # in minutes
+travel_time_cutoff <- 30 # in minutes
+departure_datetime <- as.POSIXct("07-06-2023 18:00:00", format = "%d-%m-%Y %H:%M:%S")
+time_window <- 30 # in minutes
+percentiles <- 50
+
+access_AER <- accessibility(r5r_core,
+                        origins = orgpoints,
+                        destinations = destpoints,
+                        mode = mode,
+                        opportunities_colnames = c("AER"),
+                        decay_function = "step",
+                        cutoffs = travel_time_cutoff,
+                        departure_datetime = departure_datetime,
+                        max_walk_time = max_walk_time,
+                        time_window = time_window,
+                        percentiles = percentiles,
+                        progress = TRUE)
+head(access_AER)
+```
+## transform centroids to polygons and visualize it
+```{r}
+disk_singles <- cell_to_polygon(unlist(westminster_hexagons, use.names = FALSE), simple = FALSE)
+
+tmap_mode("view")
+tm_shape(disk_singles)+
+  tm_polygons()
+```
+## join accessibility data with the polygons sf object
+### IC
+```{r}
+disk_singles_IC <- disk_singles %>%
+  left_join(access_IC, by = c("h3_address" = "id"))
+
+head(disk_singles_IC)
+```
+### PST
+```{r}
+disk_singles_PST <- disk_singles %>%
+  left_join(access_PST, by = c("h3_address" = "id"))
+
+head(disk_singles_PST)
+```
+### AER
+```{r}
+disk_singles_AER <- disk_singles %>%
+  left_join(access_AER, by = c("h3_address" = "id"))
+
+head(disk_singles_AER)
+```
+## Visualize the joined polygons
+make sure the CRS of westminster_shp is 27700
+```{r}
+westminster_shp %>%
+  st_transform(.,27700)
+```
+### IC
+```{r}
+ggplot(disk_singles_IC) + 
+  geom_sf(aes(fill = accessibility), color = NA) + 
+  geom_sf(data = westminster_shp, fill = NA, color = "black", size = 1) + 
+  scale_fill_viridis_c(option = "inferno") + 
+  labs(fill = "Accessible IC\norganizations") + 
+  theme_minimal() +
+  labs(
+    title = "Accessibility scores for IC section",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+### PST
+```{r}
+ggplot(disk_singles_PST) + 
+  geom_sf(aes(fill = accessibility), color = NA) + 
+  geom_sf(data = westminster_shp, fill = NA, color = "black", size = 1) + 
+  scale_fill_viridis_c(option = "inferno") + 
+  labs(fill = "Accessible PST\norganizations") + 
+  theme_minimal() +
+  labs(
+    title = "Accessibility scores for PST section",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+### AER
+```{r}
+ggplot(disk_singles_AER) + 
+  geom_sf(aes(fill = accessibility), color = NA) + 
+  geom_sf(data = westminster_shp, fill = NA, color = "black", size = 1) + 
+  scale_fill_viridis_c(option = "inferno") + 
+  labs(fill = "Accessible AER\norganizations") + 
+  theme_minimal() +
+  labs(
+    title = "Accessibility scores for AER section",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+## export the results out as shapefile
+```{r}
+# Export the sf object as a shapefile
+
+#IC
+st_write(disk_singles_IC, "data/clusters/access/IC/IC.shp")
+#PST
+st_write(disk_singles_PST, "data/clusters/access/PST/PST.shp")
+#AER
+st_write(disk_singles_AER, "data/clusters/access/AER/AER.shp")
+```
+
