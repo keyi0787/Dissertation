@@ -48,7 +48,7 @@ library(sf)
 ```{r}
 # Define paths
 r5_path <- "data/r5-v7.2-all.jar"
-data_path <- "data/try_for_ttm/cleaned_gtfs/"
+data_path <- "data/try_for_ttm/cleaned_gtfs/"  # This can be downloaded through this link: https://liveuclac-my.sharepoint.com/:f:/g/personal/ucfnluo_ucl_ac_uk/Evg6Mj79cmtClSDpa97ZjYkBs9sHy1hnRe9R8PCYLP7VFg
 
 # Initialize R5 core
 # may need to restart R!
