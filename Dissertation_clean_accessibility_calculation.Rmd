@@ -1,0 +1,231 @@
+---
+title: "Dissertation_accessibility"
+output: html_document
+date: "2024-08-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# Packages needed
+load in all the libraries for this part
+```{r}
+# Allocate larger space to run this function
+options(java.parameters = "-Xmx12G")
+
+# Load necessary libraries
+library(r5r)
+library(data.table)
+library(tmap)
+library(ggplot2)
+library(h3jsr)
+library(dplyr)
+library(sf)
+```
+# Urban Accessibility
+## set up the r5r core
+```{r}
+# Define paths
+r5_path <- "data/r5-v7.2-all.jar"
+data_path <- "data/try_for_ttm/cleaned_gtfs/"
+
+# Initialize R5 core
+# may need to restart R!
+r5r_core <- setup_r5(data_path = data_path, verbose = FALSE)
+```
+## read in corresponding csv data
+```{r}
+#the path may need to change to replicate the analysis
+orgpoints <- fread(file.path("C:/Users/lky09/Documents/casa/Dissertation/WCC/culture clusters/data/try_for_ttm/westminster_centroids.csv"))
+destpoints <- fread(file.path("C:/Users/lky09/Documents/casa/Dissertation/WCC/culture clusters/data/try_for_ttm/destpoints.csv"))
+```
+## calculate the accessibility
+### IC
+```{r}
+mode <- c("WALK", "TRANSIT")
+max_walk_time <- 30 # in minutes
+travel_time_cutoff <- 30 # in minutes
+departure_datetime <- as.POSIXct("24-07-2023 9:00:00", format = "%d-%m-%Y %H:%M:%S")
+time_window <- 30 # in minutes
+percentiles <- 50
+
+access_IC <- accessibility(r5r_core,
+                        origins = orgpoints,
+                        destinations = destpoints,
+                        mode = mode,
+                        opportunities_colnames = c("IC"),
+                        decay_function = "step",
+                        cutoffs = travel_time_cutoff,
+                        departure_datetime = departure_datetime,
+                        max_walk_time = max_walk_time,
+                        time_window = time_window,
+                        percentiles = percentiles,
+                        progress = TRUE)
+head(access_IC)
+```
+### PST
+```{r}
+mode <- c("WALK", "TRANSIT")
+max_walk_time <- 30 # in minutes
+travel_time_cutoff <- 30 # in minutes
+departure_datetime <- as.POSIXct("24-07-2023 9:00:00", format = "%d-%m-%Y %H:%M:%S")
+time_window <- 30 # in minutes
+percentiles <- 50
+
+access_PST <- accessibility(r5r_core,
+                        origins = orgpoints,
+                        destinations = destpoints,
+                        mode = mode,
+                        opportunities_colnames = c("PST"),
+                        decay_function = "step",
+                        cutoffs = travel_time_cutoff,
+                        departure_datetime = departure_datetime,
+                        max_walk_time = max_walk_time,
+                        time_window = time_window,
+                        percentiles = percentiles,
+                        progress = TRUE)
+head(access_PST)
+```
+### AER
+```{r}
+mode <- c("WALK", "TRANSIT")
+max_walk_time <- 30 # in minutes
+travel_time_cutoff <- 30 # in minutes
+departure_datetime <- as.POSIXct("24-07-2023 9:00:00", format = "%d-%m-%Y %H:%M:%S")
+time_window <- 30 # in minutes
+percentiles <- 50
+
+access_AER <- accessibility(r5r_core,
+                        origins = orgpoints,
+                        destinations = destpoints,
+                        mode = mode,
+                        opportunities_colnames = c("AER"),
+                        decay_function = "step",
+                        cutoffs = travel_time_cutoff,
+                        departure_datetime = departure_datetime,
+                        max_walk_time = max_walk_time,
+                        time_window = time_window,
+                        percentiles = percentiles,
+                        progress = TRUE)
+head(access_AER)
+```
+## transform centroids to polygons and visualize it
+```{r}
+disk_singles <- cell_to_polygon(unlist(westminster_hexagons, use.names = FALSE), simple = FALSE)
+
+tmap_mode("view")
+tm_shape(disk_singles)+
+  tm_polygons()
+```
+## join accessibility data with the polygons sf object
+### IC
+```{r}
+disk_singles_IC <- disk_singles %>%
+  left_join(access_IC, by = c("h3_address" = "id"))
+
+head(disk_singles_IC)
+```
+### PST
+```{r}
+disk_singles_PST <- disk_singles %>%
+  left_join(access_PST, by = c("h3_address" = "id"))
+
+head(disk_singles_PST)
+```
+### AER
+```{r}
+disk_singles_AER <- disk_singles %>%
+  left_join(access_AER, by = c("h3_address" = "id"))
+
+head(disk_singles_AER)
+```
+## Visualize the joined polygons
+make sure the CRS of westminster_shp is 27700
+```{r}
+westminster_shp %>%
+  st_transform(.,27700)
+```
+### IC
+```{r}
+ggplot(disk_singles_IC) + 
+  geom_sf(aes(fill = accessibility), color = NA) + 
+  geom_sf(data = westminster_shp, fill = NA, color = "black", size = 1) + 
+  scale_fill_viridis_c(option = "inferno") + 
+  labs(fill = "Accessible IC\norganizations") + 
+  theme_minimal() +
+  labs(
+    title = "Accessibility scores for IC section",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+### PST
+```{r}
+ggplot(disk_singles_PST) + 
+  geom_sf(aes(fill = accessibility), color = NA) + 
+  geom_sf(data = westminster_shp, fill = NA, color = "black", size = 1) + 
+  scale_fill_viridis_c(option = "inferno") + 
+  labs(fill = "Accessible PST\norganizations") + 
+  theme_minimal() +
+  labs(
+    title = "Accessibility scores for PST section",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+### AER
+```{r}
+ggplot(disk_singles_AER) + 
+  geom_sf(aes(fill = accessibility), color = NA) + 
+  geom_sf(data = westminster_shp, fill = NA, color = "black", size = 1) + 
+  scale_fill_viridis_c(option = "inferno") + 
+  labs(fill = "Accessible AER\norganizations") + 
+  theme_minimal() +
+  labs(
+    title = "Accessibility scores for AER section",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+## export the results out as shapefile
+```{r}
+# Export the sf object as a shapefile
+
+#IC
+st_write(disk_singles_IC, "data/clusters/access/IC/IC.shp")
+#PST
+st_write(disk_singles_PST, "data/clusters/access/PST/PST.shp")
+#AER
+st_write(disk_singles_AER, "data/clusters/access/AER/AER.shp")
+```
+
