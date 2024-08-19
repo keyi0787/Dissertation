@@ -1,0 +1,145 @@
+---
+title: "Preparing"
+output: html_document
+date: "2024-08-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+# Packages needed
+install the package for GTFS data transformation if needed
+```{r}
+# install.packages("remotes")
+remotes::install_github("ITSleeds/UK2GTFS")
+```
+load in all the libraries for this part
+```{r}
+library(h3jsr)
+library(sf)
+library(dplyr)
+library(UK2GTFS)
+library(tidyverse)
+library(gtfstools)
+```
+
+# data preparation
+## get gtfs.zip from UK2GTFS package
+London GTFS is in the format of TransXchange data, downloaded from the website: https://www.travelinedata.org.uk/traveline-open-data/traveline-national-dataset/. This website requires the open source software like Filezilla or Core FTP to download the remote TransXchange data zip files to the local directory. (download date: 16 Augest 2024, followed the instruction in https://citygeographics.org/r5r-workshop/uk-transit-data-transxchange-and-atoc/)
+
+Then the TransXchange data will be converted to gtfs format using UK2GTFS r package. This may cost a while for the data transformation.
+```{r}
+path_in <- "data/try_for_ttm/my_gtfs/L.zip" #this is the downloaded data of London PT services from TransXchange and the size is too large to upload to github
+gtfs <- transxchange2gtfs(path_in = path_in,
+ ncores = 4)
+```
+If need to clean the GTFS output so that it can be imported into R5
+```{r}
+gtfs <- gtfs_clean(gtfs)
+gtfs <- gtfs_force_valid(gtfs)
+```
+Save the converted version of gtfs to input folder under the name London_GTFS.
+```{r}
+gtfs_write(gtfs, 
+           folder = "data/try_for_ttm/core", 
+           name = "London_GTFS_cleaned")
+```
+### extract the time for the timetable
+```{r}
+# Load GTFS data
+gtfs_file <- "data/try_for_ttm/core/London_GTFS.zip"
+gtfs_data <- read_gtfs(gtfs_file)
+
+# Inspect GTFS timetable data
+summary(gtfs_data)
+```
+dig into the calendar_dates to help determine the value for departure_datetime later when calculating accessibility
+```{r}
+summary(gtfs_data$calendar_dates)
+```
+## get tiff file of london topography
+```{r}
+# Read the shapefile
+london_shp <- st_read("data/statistical-gis-boundaries-london/ESRI/London_Borough_Excluding_MHW.shp")
+
+# Reproject the shapefile to WGS 84 if necessary
+if (st_crs(london_shp) != st_crs(4326)) {
+  london_shp <- st_transform(london_shp, crs = 4326)
+}
+
+# Fetch the elevation data
+elevation_raster <- get_elev_raster(locations = london_shp, z = 10, clip = "bbox")
+
+# Save the raster to a file
+output_file <- "data/try_for_ttm/r5/london_dem.tif"
+writeRaster(elevation_raster, filename = output_file, format = "GTiff", overwrite = TRUE)
+```
+## prepare hexagon centroids data for ttm using h3jsr
+```{r}
+# Step 1: Read the Westminster shapefile
+westminster_shp <- st_read("data/westminster_shp/westminster_shapefile.shp")
+# Step 2: Check the CRS and transform to WGS84 if necessary
+if (is.na(st_crs(westminster_shp)$epsg) || st_crs(westminster_shp)$epsg != 4326) {
+  westminster_shp <- st_transform(westminster_shp, crs = 4326)
+}
+# Step 3: Validate and simplify the geometry
+westminster_shp <- st_make_valid(westminster_shp)  # Ensure valid geometry
+westminster_shp <- st_simplify(westminster_shp, dTolerance = 0.001)  # Simplify if needed
+
+# Step 4: Define the resolution for hexagons
+resolution <- 9  # Adjust if necessary based on the area size
+# Step 5: Generate hexagons for the region
+westminster_hexagons <- h3jsr::polygon_to_cells(st_geometry(westminster_shp), res = resolution)
+# Debug: Check if hexagons were generated correctly
+print(paste("Number of hexagons generated:", length(westminster_hexagons)))
+```
+The results for the length here is 1, showing all the chracter for ID is stored in one cell in westminster_hexagons.
+```{r}
+# Step 6: Extract hexagon IDs from the list
+hexagon_ids <- unlist(westminster_hexagons)
+# Debug: Check the extracted hexagon IDs
+print("Extracted Hexagon IDs:")
+print(hexagon_ids)
+```
+```{r}
+# Step 7: Convert hexagon IDs to centroids
+centroids <- h3jsr::cell_to_point(hexagon_ids)
+
+# Step 8: Extract longitude and latitude from centroids
+lon <- sapply(centroids, function(x) x[1])
+lat <- sapply(centroids, function(x) x[2])
+
+# Step 9: Prepare the centroid data for export
+centroid_df <- data.frame(
+  h3_index = hexagon_ids,
+  lon = lon,
+  lat = lat
+)
+# Debug: View the data frame
+print("Centroid Data Frame:")
+print(head(centroid_df))
+
+# Step 10: Save the centroid data to a CSV file
+write.csv(centroid_df, "westminster_centroids.csv", row.names = FALSE)
+```
